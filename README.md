@@ -80,6 +80,12 @@ This semi-manual approach ensures ethical data usage and avoids platform restric
 
 ---
 
+## Some Sources
+
+- <https://public.tableau.com/app/profile/christopher.elwood/viz/facebook_reacts_complete/EngagementDashboard>
+
+---
+
 ## Features Used
 
 ### Page-level Features

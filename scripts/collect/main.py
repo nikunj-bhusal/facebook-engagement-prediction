@@ -14,70 +14,100 @@ SCROLL_PAUSE = 3.0
 
 
 def capture_posts(page, page_id, seen_ids: set) -> list:
-    nodes = page.query_selector_all('div[data-focus="feed_story"]')
+    # 1. Define the locator for stories
+    story_locator = page.locator('div[data-focus="feed_story"]')
+
+    # 2. Get the current count of visible stories
+    # count() is a method in Playwright Python
+    try:
+        count = story_locator.count()
+    except:
+        return []
+
     saved = []
 
-    for node in nodes:
+    for i in range(count):
         try:
-            # 1. Target the specific timestamp link in the header
-            link_el = node.query_selector(
-                'h2 + div a[role="link"], span[id] a[role="link"]'
-            )
-            if not link_el:
-                link_el = node.query_selector(
-                    'a[href*="/posts/"], a[href*="/permalink/"]'
-                )
+            # 3. Re-fetch the node by index (Freshness)
+            node = story_locator.nth(i)
 
-            if link_el:
-                raw_href = link_el.get_attribute("href") or ""
-                post_id = raw_href.split("?")[0]
-            else:
+            # Ensure the node is actually attached/visible before proceeding
+            if not node.is_visible():
                 continue
 
-            if post_id in seen_ids:
+            # 4. Target the 3rd link (Index 2) for the timestamp
+            all_links = node.locator('a[role="link"]')
+
+            # Logic check: Must have at least 3 links (Name, Image, Timestamp)
+            if all_links.count() < 3:
                 continue
 
-            # --- ACCURATE TIMESTAMP EXTRACTION ---
+            link_el = all_links.nth(2)
+
+            # 5. Extract ID and Check if Seen
+            raw_href = link_el.get_attribute("href") or ""
+
+            # If Index [2] doesn't look like a post link, try a generic search
+            if not any(x in raw_href for x in ["/posts/", "pfbid", "permalink"]):
+                fallback = node.locator(
+                    'a[href*="/posts/"], a[href*="pfbid"], a[href*="/permalink/"]'
+                ).first
+                if fallback.count() > 0:
+                    link_el = fallback
+                    raw_href = link_el.get_attribute("href") or ""
+                else:
+                    continue  # Skip if no post link found at all
+
+            post_id = raw_href.split("?")[0]
+            if not post_id or post_id in seen_ids:
+                continue
+
+            # --- TIMESTAMP EXTRACTION ---
             full_timestamp = "Unknown"
 
-            # Step A: Check aria-label first (Instant & Accurate)
+            # A. Try aria-label first
             label = link_el.get_attribute("aria-label")
-            if label and len(label) > 12:  # Usually contains "day, month date, year..."
+            if label and len(label) > 12:
                 full_timestamp = label
             else:
-                # Step B: Hover Fallback with "Freshness" Check
+                # B. Hover "Wiggle"
                 link_el.scroll_into_view_if_needed()
+                box = link_el.bounding_box()
+                if box:
+                    # Clear previous tooltips
+                    page.mouse.move(0, 0)
 
-                # Move mouse to a neutral spot first to close any old tooltips
-                page.mouse.move(0, 0)
-                time.sleep(0.2)
+                    # Target center of timestamp link
+                    center_x = box["x"] + box["width"] / 2
+                    center_y = box["y"] + box["height"] / 2
 
-                # Perform the hover
-                link_el.hover()
+                    page.mouse.move(center_x, center_y)
+                    # Small wiggle to wake up JS listeners
+                    page.mouse.move(center_x + 2, center_y + 2)
 
-                # Wait specifically for the tooltip to appear and be stable
-                try:
-                    # Target common FB tooltip selectors
-                    tooltip_selector = '[role="tooltip"], .uiContextualLayer'
-                    page.wait_for_selector(tooltip_selector, timeout=2000)
+                    try:
+                        # Wait for tooltip injection
+                        tooltip_selector = '[role="tooltip"], .uiContextualLayer'
+                        page.wait_for_selector(tooltip_selector, timeout=1200)
+                        tooltip = page.query_selector(tooltip_selector)
+                        if tooltip:
+                            full_timestamp = tooltip.inner_text().strip()
+                    except:
+                        full_timestamp = "Hover Timeout"
 
-                    # Capture text
-                    tooltip = page.query_selector(tooltip_selector)
-                    if tooltip:
-                        full_timestamp = tooltip.inner_text().strip()
-                except Exception:
-                    full_timestamp = "Hover Timeout"
-
-            # Final Cleanup: Move mouse away so the next post starts clean
+            # Move mouse away so the next post doesn't get a 'ghost' tooltip
             page.mouse.move(0, 0)
 
+            # --- SAVE BLOCK ---
             seen_ids.add(post_id)
             index = len(seen_ids) - 1
 
-            # --- SAVE DATA ---
+            # Capture the fresh HTML
             outer_html = node.evaluate("el => el.outerHTML")
-            timestamp_marker = f'<span class="custom-timestamp" style="display:none">{full_timestamp}</span>'
-            save_content = f"{timestamp_marker}\n{outer_html}"
+
+            # Embed metadata at the top for easy CSV parsing later
+            metadata = f""
+            save_content = f"{metadata}\n{outer_html}"
 
             PAGE_DIR = os.path.join(OUTPUT_DIR, page_id)
             os.makedirs(PAGE_DIR, exist_ok=True)
@@ -87,10 +117,10 @@ def capture_posts(page, page_id, seen_ids: set) -> list:
                 f.write(save_content)
 
             saved.append(filename)
-            print(f"    ✓ [{index}] {full_timestamp}")
+            print(f"    ✓ Captured [{index}]: {full_timestamp}")
 
         except Exception as e:
-            print(f"    ⚠ Node error: {e}")
+            # Handle potential stale element during processing
             continue
 
     return saved
@@ -171,7 +201,7 @@ def harvest_all():
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             USER_DATA_DIR,
-            headless=False,
+            headless=True,
             viewport={"width": 1280, "height": 800},
             args=["--disable-blink-features=AutomationControlled"],
         )
