@@ -13,11 +13,11 @@ from typing import Any
 import pandas as pd
 from playwright.async_api import BrowserContext, Page, async_playwright
 
-INPUT_CSV = "candidates.csv"
+INPUT_CSV = "final_constituencies.csv"
 OUTPUT_DIR = Path("election_data")
 LOG_DIR = Path("logs")
-POSTS_PER_CANDIDATE = 30
-CONCURRENCY = 10
+POSTS_PER_CANDIDATE = 25
+CONCURRENCY = 5
 HEADLESS = True
 USER_DATA_DIR = "./sessions"
 
@@ -129,7 +129,7 @@ def prompt_district_selection(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_search_url(row: Any) -> str:
     query = str(row.PowerSearchQuery)
-    return f"https://x.com/search?q={urllib.parse.quote(query)}&f=live&src=typed_query"
+    return f"https://x.com/search?q={urllib.parse.quote(query)}&f=top&src=typed_query"
 
 
 def jitter(lo: float = 2.5, hi: float = 6.0) -> float:
